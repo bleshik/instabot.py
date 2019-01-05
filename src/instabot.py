@@ -7,7 +7,7 @@ import sys
 import pickle
 
 if (sys.version_info < (3, 0)):
-     # Python 3 code in this block
+     # Python < 3 code in this block
      print('Python v3.5 or above required for Instaloader module at the moment. Exiting...')
      quit()
 
@@ -19,7 +19,7 @@ except:
 
 
 #Required Dependencies and Modules, offer to install them automatically
-required_modules = ['requests', 'instaloader', 'fake_useragent']
+required_modules = ['requests', 'instaloader', 'fake_useragent', 'threading']
     
 for modname in required_modules:
     try:
@@ -56,10 +56,8 @@ import random
 import signal
 import sqlite3
 import time
+import os
 import re
-import threading
-import requests
-import instaloader
 from .sql_updates import check_and_update, check_already_liked
 from .sql_updates import check_already_followed, check_already_unfollowed
 from .sql_updates import insert_media, insert_username, insert_unfollow_count
@@ -169,7 +167,8 @@ class InstaBot:
 
     # For new_auto_mod
     next_iteration = {"Like": 0, "Follow": 0, "Unfollow": 0, "Comments": 0}
-
+    prog_run = True
+    
     def __init__(self,
                  login,
                  password,
@@ -290,8 +289,8 @@ class InstaBot:
         self.write_log(log_string)
         self.login()
         self.populate_user_blacklist()
-        if threading.current_thread() == threading.main_thread():
-            signal.signal(signal.SIGTERM, self.cleanup)
+        signal.signal(signal.SIGINT, self.cleanup)
+        signal.signal(signal.SIGTERM, self.cleanup)
         atexit.register(self.cleanup)
         self.instaload = instaloader.Instaloader()
     
@@ -371,7 +370,8 @@ class InstaBot:
                     self.csrftoken = login.cookies['csrftoken']
                     self.s.headers.update({'X-CSRFToken': login.cookies['csrftoken']})
             except:
-                write_log('Something wrong with login')
+                self.write_log('Something wrong with login')
+                self.write_log(login.text)
                 
             if "checkpoint_required" in login.text:
                 try:
@@ -460,6 +460,7 @@ class InstaBot:
             else:
                 self.login_status = False
                 self.write_log('Login error! Check your login data!')
+                self.prog_run = False;
         else:
             self.write_log('Login error! Connection error!')
 
@@ -504,6 +505,7 @@ class InstaBot:
         # Logout
         if self.login_status and self.session_file == None:
             self.logout()
+        self.prog_run = False
 
     def get_media_id_by_tag(self, tag):
         """ Get media ID set, by your hashtag or location """
@@ -852,14 +854,16 @@ class InstaBot:
     def auto_mod(self):
         """ Star loop, that get media ID by your tag list, and like it """
         if self.login_status:
-            while True:
+            while self.prog_run:
                 random.shuffle(self.tag_list)
                 self.get_media_id_by_tag(random.choice(self.tag_list))
                 self.like_all_exist_media(random.randint \
                                               (1, self.max_like_for_one_tag))
+            self.write_log("Exit Program... GoodBye")
+            sys.exit(0)
 
     def new_auto_mod(self):
-        while True:
+        while self.prog_run and self.login_status:
             now = datetime.datetime.now()
             if (
                     datetime.time(self.start_at_h, self.start_at_m) <= now.time()
@@ -879,7 +883,7 @@ class InstaBot:
                 # ------------------- Unfollow -------------------
                 self.new_auto_mod_unfollow()
                 # ------------------- Comment -------------------
-                self.new_auto_mod_comments()
+                self.new_auto_mod_comments()    
                 # Bot iteration in 1 sec
                 time.sleep(3)
                 # print("Tic!")
@@ -887,6 +891,8 @@ class InstaBot:
                 print("!!sleeping until {hour}:{min}".format(hour=self.start_at_h,
                                                            min=self.start_at_m), end="\r")
                 time.sleep(100)
+        self.write_log("Exit Program... GoodBye")
+        sys.exit(0)
 
     def remove_already_liked(self):
         self.write_log("Removing already liked medias..")
@@ -910,8 +916,11 @@ class InstaBot:
                 if self.this_tag_like_count >= self.max_tag_like_count:
                     self.media_by_tag = [0]
             # Del first media_id
+        try:
             del self.media_by_tag[0]
-
+        except:
+            print('Could not remove media')
+            
     def new_auto_mod_follow(self):
         if time.time() < self.next_iteration["Follow"]:
             return
